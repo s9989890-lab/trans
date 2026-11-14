@@ -24,12 +24,14 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Resolve frontend directory path without moving files
-const frontendDir = path.resolve(backendDir, '..', 'expense-tracker');
+// Resolve frontend static directory (prefers built dist, falls back to source folder)
+const distDir = path.resolve(backendDir, '..', 'dist');
+const sourceFrontendDir = path.resolve(backendDir, '..', 'expense-tracker');
+const staticDir = fs.existsSync(distDir) ? distDir : sourceFrontendDir;
 
 // Serve static frontend files
-if (fs.existsSync(frontendDir)) {
-  app.use(express.static(frontendDir));
+if (fs.existsSync(staticDir)) {
+  app.use(express.static(staticDir));
 }
 
 // API Routes
@@ -42,10 +44,10 @@ app.use('/api/alerts', alertRoutes);
 app.use('/api', notFoundHandler);
 
 // Fallback to index.html for root or client navigation if frontend exists
-if (fs.existsSync(frontendDir)) {
+if (fs.existsSync(staticDir)) {
   app.use((req, res, next) => {
     if (req.method === 'GET' && !req.path.startsWith('/api')) {
-      return res.sendFile(path.join(frontendDir, 'index.html'));
+      return res.sendFile(path.join(staticDir, 'index.html'));
     }
     next();
   });

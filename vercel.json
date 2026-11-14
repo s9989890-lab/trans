@@ -1,17 +1,14 @@
 {
   "version": 2,
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "/api/index"
     },
     {
-      "source": "/",
-      "destination": "/expense-tracker/index.html"
-    },
-    {
       "source": "/(.*)",
-      "destination": "/expense-tracker/$1"
+      "destination": "/index.html"
     }
   ],
   "functions": {

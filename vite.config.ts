@@ -2,10 +2,11 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const dir = typeof import.meta.dirname !== 'undefined' ? import.meta.dirname : path.resolve('.');
   return {
-    root: path.resolve(__dirname, 'expense-tracker'),
+    root: path.resolve(dir, 'expense-tracker'),
     build: {
-      outDir: path.resolve(__dirname, 'dist'),
+      outDir: path.resolve(dir, 'dist'),
       emptyOutDir: true,
     },
     server: {
