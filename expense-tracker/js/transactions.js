@@ -120,7 +120,7 @@ export function queryTransactions(transactions, filters = {}) {
   const sorted = [...filtered];
   sorted.sort((a, b) => {
     if (sortBy === 'date-asc') {
-      return a.date.localeCompare(b.date) || a.id.localeCompare(b.id);
+      return a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id));
     }
     if (sortBy === 'amount-desc') {
       return b.amount - a.amount || b.date.localeCompare(a.date);
@@ -128,7 +128,7 @@ export function queryTransactions(transactions, filters = {}) {
     if (sortBy === 'amount-asc') {
       return a.amount - b.amount || b.date.localeCompare(a.date);
     }
-    return b.date.localeCompare(a.date) || b.id.localeCompare(a.id);
+    return b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id));
   });
 
   return sorted;

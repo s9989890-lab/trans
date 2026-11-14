@@ -47,8 +47,42 @@ export function calculateBudgetStatus(transactions, budget, monthKey) {
   };
 }
 
-export function renderBudgetAlertMarkup(budgetStatus, monthKey, includeAction = false) {
+export function renderBudgetAlertMarkup(budgetStatus, monthKey, includeAction = false, smartAlerts = []) {
   const monthLabel = formatMonthLabel(monthKey);
+
+  if (Array.isArray(smartAlerts) && smartAlerts.length > 0) {
+    return `
+      <div class="smart-alerts-container" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px;">
+        ${smartAlerts
+          .map((alert) => {
+            const levelClass =
+              alert.level === 'danger'
+                ? 'is-danger'
+                : alert.level === 'warning'
+                ? 'is-warning'
+                : 'is-nominal';
+            const icon = alert.icon || (alert.level === 'danger' ? 'alert-octagon' : alert.level === 'warning' ? 'alert-triangle' : 'check-circle-2');
+            return `
+              <div class="alert-banner ${levelClass}" role="alert">
+                <div class="alert-banner-content">
+                  <i data-lucide="${escapeHtml(icon)}"></i>
+                  <span>
+                    <strong>${escapeHtml(alert.title)}:</strong> ${escapeHtml(alert.message)}
+                  </span>
+                </div>
+                ${
+                  includeAction && (alert.level === 'danger' || alert.level === 'warning')
+                    ? `<button type="button" class="btn btn-secondary btn-sm" data-goto-budget>Review Budget</button>`
+                    : ''
+                }
+              </div>
+            `;
+          })
+          .join('')}
+      </div>
+    `;
+  }
+
   if (budgetStatus.status === 'exceeded') {
     const overBy = Math.abs(budgetStatus.remainingBudget);
     return `
@@ -98,7 +132,7 @@ export function renderBudgetAlertMarkup(budgetStatus, monthKey, includeAction = 
 
 export const BudgetModule = {
   render(container, context) {
-    const { transactions, budget, selectedMonth, onSaveBudget } = context;
+    const { transactions, budget, selectedMonth, onSaveBudget, smartAlerts } = context;
     const status = calculateBudgetStatus(transactions, budget, selectedMonth);
     const monthLabel = formatMonthLabel(selectedMonth);
 
@@ -146,8 +180,9 @@ export const BudgetModule = {
       }))
       .sort((a, b) => b.amount - a.amount);
 
-    const alertHtml =
-      status.status === 'exceeded' || status.status === 'warning'
+    const alertHtml = smartAlerts && smartAlerts.length > 0
+      ? renderBudgetAlertMarkup(status, selectedMonth, false, smartAlerts)
+      : (status.status === 'exceeded' || status.status === 'warning')
         ? renderBudgetAlertMarkup(status, selectedMonth, false)
         : `
           <div class="alert-banner is-nominal" role="status">

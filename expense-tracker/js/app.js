@@ -2,7 +2,7 @@
  * Application Controller (app.js)
  *
  * Coordinates navigation, modal lifecycle, form validation, CSV export,
- * and delegates rendering to feature modules.
+ * and delegates rendering to feature modules using asynchronous REST API data.
  */
 
 import { AnalyticsModule } from './analytics.js';
@@ -10,6 +10,7 @@ import { BudgetModule } from './budget.js';
 import { DashboardModule } from './dashboard.js';
 import { StorageService } from './storage.js';
 import {
+  escapeHtml,
   formatCurrency,
   getCategoriesForType,
   TransactionsModule,
@@ -41,6 +42,7 @@ const appState = {
   selectedMonth: getCurrentMonthKey(),
   editingId: null,
   deletingId: null,
+  isLoading: false,
 };
 
 const dom = {};
@@ -56,6 +58,7 @@ function cacheDom() {
   dom.openAddModalBtn = document.getElementById('open-add-modal-btn');
   dom.exportCsvBtn = document.getElementById('export-csv-btn');
   dom.resetDemoBtn = document.getElementById('reset-demo-btn');
+  dom.globalBudgetAlert = document.getElementById('global-budget-alert');
 
   dom.views = {
     dashboard: document.getElementById('view-dashboard'),
@@ -103,6 +106,47 @@ function showToast(message, type = 'success') {
   window.setTimeout(() => {
     toast.remove();
   }, 3200);
+}
+
+function showConnectionError(message) {
+  if (!dom.globalBudgetAlert) return;
+  dom.globalBudgetAlert.hidden = false;
+  dom.globalBudgetAlert.innerHTML = `
+    <div class="alert-banner is-danger" role="alert" style="margin-bottom: 16px;">
+      <div class="alert-banner-content">
+        <i data-lucide="alert-octagon"></i>
+        <span>
+          <strong>Server Error:</strong> ${escapeHtml(message || 'Unable to connect to the backend server.')}
+        </span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" id="retry-fetch-btn">Retry</button>
+    </div>
+  `;
+  dom.globalBudgetAlert.querySelector('#retry-fetch-btn')?.addEventListener('click', () => {
+    clearConnectionError();
+    renderActiveView();
+  });
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function clearConnectionError() {
+  if (!dom.globalBudgetAlert) return;
+  dom.globalBudgetAlert.hidden = true;
+  dom.globalBudgetAlert.innerHTML = '';
+}
+
+function showLoadingState(targetView) {
+  if (!targetView) return;
+  targetView.innerHTML = `
+    <div class="empty-state" style="padding: 60px 20px;">
+      <div class="empty-state-icon">
+        <i data-lucide="rotate-cw"></i>
+      </div>
+      <h3 class="empty-state-title">Loading data...</h3>
+      <p class="empty-state-desc">Fetching financial records from the database.</p>
+    </div>
+  `;
+  if (window.lucide) window.lucide.createIcons();
 }
 
 function toggleSidebar(open) {
@@ -186,7 +230,7 @@ function showFormErrors(errors) {
 function openTransactionModal(transaction = null) {
   clearFormErrors();
   if (transaction) {
-    appState.editingId = transaction.id;
+    appState.editingId = String(transaction.id);
     dom.txnModalTitle.textContent = 'Edit Transaction';
     dom.txnId.value = transaction.id;
     setFormType(transaction.type, transaction.category);
@@ -218,13 +262,20 @@ function closeTransactionModal() {
   appState.editingId = null;
 }
 
-function openDeleteModal(id) {
-  const txn = StorageService.getTransactionById(id);
-  if (!txn) return;
-  appState.deletingId = id;
-  dom.deleteTxnName.textContent = `"${txn.title}" (${formatCurrency(txn.amount)})`;
-  dom.deleteModal.hidden = false;
-  dom.confirmDeleteBtn.focus();
+async function openDeleteModal(id) {
+  try {
+    const txn = await StorageService.getTransactionById(id);
+    if (!txn) {
+      showToast('Transaction not found.', 'error');
+      return;
+    }
+    appState.deletingId = String(id);
+    dom.deleteTxnName.textContent = `"${txn.title}" (${formatCurrency(txn.amount)})`;
+    dom.deleteModal.hidden = false;
+    dom.confirmDeleteBtn.focus();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 function closeDeleteModal() {
@@ -232,7 +283,7 @@ function closeDeleteModal() {
   appState.deletingId = null;
 }
 
-function handleSaveTransaction(e) {
+async function handleSaveTransaction(e) {
   e.preventDefault();
   clearFormErrors();
 
@@ -251,91 +302,132 @@ function handleSaveTransaction(e) {
     return;
   }
 
-  if (appState.editingId) {
-    StorageService.updateTransaction(appState.editingId, validation.sanitized);
-    showToast('Transaction updated.');
-  } else {
-    StorageService.saveTransaction(validation.sanitized);
-    showToast('Transaction added.');
+  try {
+    if (appState.editingId) {
+      await StorageService.updateTransaction(appState.editingId, validation.sanitized);
+      showToast('Transaction updated.');
+    } else {
+      await StorageService.saveTransaction(validation.sanitized);
+      showToast('Transaction added.');
+    }
+    closeTransactionModal();
+    await renderActiveView();
+  } catch (err) {
+    showToast(err.message || 'Failed to save transaction.', 'error');
   }
-
-  // Keep active month aligned if the new transaction belongs to another month?
-  // Only keep current selectedMonth unless user changes it, so navigation stays predictable.
-  closeTransactionModal();
-  renderActiveView();
 }
 
-function handleConfirmDelete() {
+async function handleConfirmDelete() {
   if (!appState.deletingId) return;
-  const deleted = StorageService.deleteTransaction(appState.deletingId);
-  closeDeleteModal();
-  if (deleted) {
+  try {
+    await StorageService.deleteTransaction(appState.deletingId);
+    closeDeleteModal();
     showToast('Transaction deleted.');
-    renderActiveView();
+    await renderActiveView();
+  } catch (err) {
+    showToast(err.message || 'Failed to delete transaction.', 'error');
   }
 }
 
-function handleSaveBudget(monthlyLimit) {
-  StorageService.saveBudget(monthlyLimit);
-  showToast('Monthly budget updated.');
-  renderActiveView();
+async function handleSaveBudget(monthlyLimit) {
+  try {
+    const [yearStr, monthStr] = appState.selectedMonth.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    await StorageService.saveBudget(year, month, monthlyLimit);
+    showToast('Monthly budget updated.');
+    await renderActiveView();
+  } catch (err) {
+    showToast(err.message || 'Failed to update monthly budget.', 'error');
+  }
 }
 
-function handleExportCSV() {
-  const transactions = StorageService.getTransactions();
-  if (transactions.length === 0) {
-    showToast('No transactions available to export.', 'error');
-    return;
+async function handleExportCSV() {
+  try {
+    const transactions = await StorageService.getTransactions();
+    if (transactions.length === 0) {
+      showToast('No transactions available to export.', 'error');
+      return;
+    }
+
+    const csv = transactionsToCSV(transactions);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `clearledger-transactions-${getTodayDateString()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('Transactions exported as CSV.');
+  } catch (err) {
+    showToast(err.message || 'Failed to export transactions.', 'error');
+  }
+}
+
+async function handleResetDemo() {
+  try {
+    await StorageService.resetDemoData(appState.selectedMonth);
+    showToast('Sample data synchronized.');
+    await renderActiveView();
+  } catch (err) {
+    showToast(err.message || 'Failed to synchronize demo data.', 'error');
+  }
+}
+
+async function renderActiveView() {
+  const currentViewSection = dom.views[appState.activeView];
+  const [yearStr, monthStr] = appState.selectedMonth.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+
+  // If section is empty, display loading indicator
+  if (currentViewSection && !currentViewSection.innerHTML.trim()) {
+    showLoadingState(currentViewSection);
   }
 
-  const csv = transactionsToCSV(transactions);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `clearledger-transactions-${getTodayDateString()}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  showToast('Transactions exported as CSV.');
-}
+  try {
+    const [transactions, budget, smartAlertsData] = await Promise.all([
+      StorageService.getTransactions(),
+      StorageService.getBudget(year, month),
+      StorageService.getSmartAlerts(year, month),
+    ]);
 
-function handleResetDemo() {
-  StorageService.resetDemoData();
-  appState.selectedMonth = getCurrentMonthKey();
-  dom.monthSelector.value = appState.selectedMonth;
-  showToast('Sample data restored.');
-  renderActiveView();
-}
+    clearConnectionError();
 
-function renderActiveView() {
-  const transactions = StorageService.getTransactions();
-  const budget = StorageService.getBudget();
-  const selectedMonth = appState.selectedMonth;
+    const smartAlerts = smartAlertsData?.alerts || [];
 
-  const context = {
-    transactions,
-    budget,
-    selectedMonth,
-    onNavigate: navigateTo,
-    onOpenAddModal: () => openTransactionModal(null),
-    onEditTransaction: (id) => {
-      const txn = StorageService.getTransactionById(id);
-      if (txn) openTransactionModal(txn);
-    },
-    onDeleteTransaction: (id) => openDeleteModal(id),
-    onSaveBudget: handleSaveBudget,
-  };
+    const context = {
+      transactions,
+      budget,
+      selectedMonth: appState.selectedMonth,
+      smartAlerts,
+      onNavigate: navigateTo,
+      onOpenAddModal: () => openTransactionModal(null),
+      onEditTransaction: async (id) => {
+        try {
+          const txn = await StorageService.getTransactionById(id);
+          if (txn) openTransactionModal(txn);
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      },
+      onDeleteTransaction: (id) => openDeleteModal(id),
+      onSaveBudget: handleSaveBudget,
+    };
 
-  if (appState.activeView === 'dashboard') {
-    DashboardModule.render(dom.views.dashboard, context);
-  } else if (appState.activeView === 'transactions') {
-    TransactionsModule.render(dom.views.transactions, context);
-  } else if (appState.activeView === 'analytics') {
-    AnalyticsModule.render(dom.views.analytics, context);
-  } else if (appState.activeView === 'budget') {
-    BudgetModule.render(dom.views.budget, context);
+    if (appState.activeView === 'dashboard') {
+      DashboardModule.render(dom.views.dashboard, context);
+    } else if (appState.activeView === 'transactions') {
+      TransactionsModule.render(dom.views.transactions, context);
+    } else if (appState.activeView === 'analytics') {
+      AnalyticsModule.render(dom.views.analytics, context);
+    } else if (appState.activeView === 'budget') {
+      BudgetModule.render(dom.views.budget, context);
+    }
+  } catch (err) {
+    showConnectionError(err.message);
   }
 }
 
@@ -390,12 +482,19 @@ function bindEvents() {
   });
 }
 
-function init() {
-  StorageService.initializeIfNeeded();
+async function init() {
   cacheDom();
   dom.monthSelector.value = appState.selectedMonth;
   bindEvents();
   navigateTo('dashboard');
+
+  // Trigger migration if old LocalStorage records exist
+  const migrationResult = await StorageService.initializeIfNeeded();
+  if (migrationResult.migrated && migrationResult.count > 0) {
+    showToast(`Imported ${migrationResult.count} saved records to database.`);
+    await renderActiveView();
+  }
+
   if (window.lucide) window.lucide.createIcons();
 }
 

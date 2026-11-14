@@ -112,6 +112,7 @@ export const DashboardModule = {
       onEditTransaction,
       onDeleteTransaction,
       onOpenAddModal,
+      smartAlerts,
     } = context;
 
     destroyCharts();
@@ -127,7 +128,7 @@ export const DashboardModule = {
     }).slice(0, 6);
 
     const categoryBreakdown = getExpenseCategoryBreakdown(transactions, selectedMonth);
-    const alertBannerHtml = renderBudgetAlertMarkup(budgetStatus, selectedMonth, true);
+    const alertBannerHtml = renderBudgetAlertMarkup(budgetStatus, selectedMonth, true, smartAlerts);
 
     container.innerHTML = `
       ${alertBannerHtml}
