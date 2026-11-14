@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/",
+      "destination": "/expense-tracker/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/expense-tracker/$1"
+    }
+  ],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "backend/**"
+    }
+  }
+}
